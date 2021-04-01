@@ -1,0 +1,148 @@
+---
+title: "Workflow Confidence Interval Estimation"
+author: "Jeremiah MF Kelly"
+date: "15/02/2021"
+output:
+  word_document: default
+  html_document: default
+  pdf_document: default
+header-includes: \usepackage{amsmath} \usepackage{tinytex} \usepackage{bm} \let\counterwithout\relax \let\counterwithin\relax \usepackage{chngcntr} \counterwithin{figure}{section}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+\newcommand{\fn}{\Bigg(thrs_i -\bigg(\theta_1 + \theta_2\exp\big(-\frac{time_i}{\theta_3}\big) + \theta_4 \frac{(time_i - \theta_5)}{1 + \exp(time_i - \theta_5)}\bigg)          \Bigg)}
+
+\newcommand{\Par}[1]{\boldsymbol{\hat\theta}_{#1}}
+
+The parameters are first estimated using a gradient descent method (Polyak, B.T. Some methods of speeding up the convergence of iteration methods. USSR Computational Mathematics and Mathematical Physics, 4(5):1–17, 1964.)
+
+
+To find the confidence intervals of the parameter estimate we use the delta method (Cox, C. (2005). Delta Method. In Encyclopedia of Biostatistics (eds P. Armitage and T. Colton). https://doi.org/10.1002/0470011815.b2a15029). 
+
+This paper provides an easy to read introduction Jay M. Ver Hoef ((2012) Who Invented the Delta Method?, The American Statistician, 66:2, 124-127, DOI: 10.1080/00031305.2012.687494). The method uses a Taylor expansion of a function to approximate the variance of that function, the expansion is as follows, 
+
+$$
+\begin{align}
+Y &=  f(\boldsymbol{\theta})\\
+Y &= f(\Par{i}) + f^{\prime}(\Par{i})(\boldsymbol{\theta} - \Par{i}) +\frac{1}{2}f^{\prime\prime}(\Par{i})(\boldsymbol{\theta}- \Par{i})^2 + \dots, 
+\end{align}
+$$
+
+where $f^{\prime}(\Par{i})$ and $f^{\prime\prime}(\Par{i})$ are the first and second derivatives of the function at $\Par{i}$. The expansion can be as large as is wanted plus a remainder, my method assumes that $R$ in the following is small.
+$$
+\begin{align}
+Y &= f(\Par{i}) + f^{\prime}(\Par{i})({\boldsymbol{\theta}} -\Par{i}) + R,\\ 
+Y &\simeq f(\Par{i}) + f^{\prime}(\Par{i})({\boldsymbol{\theta}} -\Par{i}),\\
+Y - f(\Par{i}) &\simeq  f^{\prime}(\Par{i})({\boldsymbol{\theta}} -\Par{i}),
+\end{align}
+$$
+The left handside shows the difference for each threshold between the model and the observed value for a given set of parameters $\Par{i}$. Squaring these values, summing and dividing by the degrees of freedom gives us the mean squared error of the residuals. This implies that the mean squared error is equal to the gradient vector squared multiplied by the standard deviation of the parameter estimates.
+$$
+\begin{align}
+(Y - f(\Par{i}))^2 &\simeq  (f^{\prime}(\Par{i})({\boldsymbol{\theta}} -\Par{i}))^2,\\
+\sum((Y - f(\Par{i}))^2) &\simeq  \sum((f^{\prime}(\Par{i})({\boldsymbol{\theta}} -\Par{i}))^2),\\
+\sum\frac{(Y - f(\Par{i}))^2}{df} &\simeq  f^{\prime}(\Par{i})^2\sum\frac{({\boldsymbol{\theta}} -\Par{i})^2}{df},
+\end{align}
+$$
+
+if we square both sides and take the expectation (i.e. divide by degrees of freedom) we establish that the variance is
+
+$$
+\begin{equation}
+Var(Y_{res}) = [f^{\prime}(\Par{i})]^2\sigma^2_{\Par{i}}.
+\end{equation}
+$$
+
+
+## Application
+The Mahroo Lamb Pugh model can be written,
+
+$$
+\begin{equation}
+Y = CT + CC * exp\Big(\frac{x}{\tau}\Big) +S2 * H(\alpha, x) + S3 * H(\beta, x), 
+\end{equation}
+$$
+
+where $H(., x)$ is a switch function, I use a version of the logistic function. However, McGwin uses a step function. I use a continuous function so that it is easier to differentiate. 
+
+$$
+\begin{equation}
+H(\rho, x ) = \frac{x- \rho}{1 + exp(-k(x - \rho))}
+\end{equation}
+$$
+
+```{r echo=FALSE, cache=TRUE}
+library(formatR)
+M <- expression((
+  ct + cc * exp(-x/tau) + 
+    S2 * (x - alpha)/(1 + exp(-40 * (x - alpha)))+ 
+    S3 * (x - beta)/(1 + exp(-40 * (x - beta)))
+                 ))
+Params <- c("ct", "cc", "tau", "S2", "alpha", "S3", "beta")
+
+```
+
+The vector representing the gradient $\boldsymbol{G} = f^{\prime}(\Par{i})$ is used to calculate the variance-covariance matrix along with the standard error of the residuals for a given $\Par{i}$
+
+$$
+\begin{align}
+Var(Y_{res}) =& \frac{\sum((Y - f(\Par{i}))^2}{df},\\
+Var(Y_{res})  =& (\boldsymbol{G}^{\prime}\boldsymbol{G})Var_{lin}(\Par{i})\\
+Var_{lin}(\Par{i}) =& (\boldsymbol{G}^{\prime}\boldsymbol{G})^{-1}Var(Y_{res}) 
+\end{align}
+$$
+
+
+The standard errors of the parameter estimates are given by the square root of the matrix ($Var_{lin}$) diagonal
+There is a summary of the method in R here http://sia.webpopix.org/nonlinearRegression.html#standard-errors-of-the-parameter-estimates
+
+### Worked example in R 
+
+This is for the five parameter model, the seven parameter model uses the same method
+```{r cache = TRUE, fig.width=6, fig.height=6}
+# crosscheck SE for pk = 241
+theta = c(-1.4854467,  1.3885495,  0.5477909, -0.2287327,  3.1289670 )
+time <- x <- c(0.26296667, 0.4753    , 0.70723333, 0.9555    , 1.21553333,
+       1.48633333, 1.7684    , 2.06418333, 2.36468333, 2.67003333,
+       2.97075   , 3.26135   , 3.5383    , 3.81528333, 4.0935    ,
+       4.38153333, 4.67076667, 4.95933333, 5.24596667, 5.53056667,
+       5.81501667, 6.09876667, 6.38078333, 6.66281667)
+
+thrs <- y <- c(-0.637, -0.913, -1.009, -1.287, -1.424, -1.403, -1.338, -1.483,
+       -1.465, -1.455, -1.493, -1.486, -1.526, -1.678, -1.743, -1.753,
+       -1.834, -1.936, -2.007, -2.042, -2.018, -2.246, -2.248, -2.224)
+        P5c <- function(P,x){
+          P[1] + P[2] * exp(-x/P[3]) + P[4] * (x - P[5])/(1 + exp(-2 * 
++     20 * (x - P[5])))
+        }
+      par(las = 1, bty ='n')
+       plot(time, thrs, ylim =c(-4,0), xlab ="Time (min)", ylab ="Threshold (a.u.)")
+       lines(time,P5c(theta,x) )
+
+```
+ 
+ the gradient can be found programmatically 
+ 
+```{r}
+Gfn <- deriv(y~(ct + cc * exp(-x/tau) + S2 * (x - alpha)/(1 + exp(-2 * 
++     20 * (x - alpha))) ), c("ct", "cc", "tau", "S2", "alpha"), function(ct,cc,tau,S2,alpha, x){}) 
+
+G <- attr(Gfn(theta[1],theta[2],theta[3],theta[4],theta[5], x),"gradient")
+
+sigma2 = (sum((y - P5c(theta,x))**2)/(length(time)-5))
+SEs <- sqrt(sigma2 * diag(solve(t(G)%*%G)))
+round(SEs,4)
+```
+
+using inbuilt functions
+
+```{r }
+
+nlm1 <- nls(y~(ct + cc * exp(-x/tau) + S2 * (x - alpha)/(1 + exp(-2 * 
++     20 * (x - alpha)))), start=c(ct = -1.5, cc = 1.3, tau = 0.6, S2 = -0.1, alpha = 3))
+summary(nlm1)
+
+
+```

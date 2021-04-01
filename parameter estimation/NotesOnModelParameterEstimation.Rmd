@@ -1,0 +1,423 @@
+---
+title: "Notes on Parameter determination"
+author: "Jeremiah MF Kelly"
+date: "10/11/2020"
+output:
+  html_document: default
+  word_document: default
+  pdf_document: default
+header-includes: \usepackage{amsmath} \usepackage{bm} \let\counterwithout\relax \let\counterwithin\relax
+  \usepackage{chngcntr} \counterwithin{figure}{section}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+\newcommand{\fn}{\Bigg(thrs_i -\bigg(\theta_1 + \theta_2\exp\big(-\frac{time_i}{\theta_3}\big) + \theta_4 \frac{(time_i - \theta_5)}{1 + \exp(time_i - \theta_5)}\bigg)          \Bigg)}
+
+\newcommand{\Par}[1]{\boldsymbol{\hat\theta}_{#1}}
+
+
+## Dark adaptation models
+
+There are at least two models used in the literature.
+The first is a twin exponential decay
+
+
+```{r twin, cache=TRUE, echo=FALSE,  fig.cap="This is my plot", fig.height=5, fig.width=5}
+library(Dark)
+par(las = 1, bty = 'n')
+plot(dark$time, dark$thrs, xlab  = "Time (min)", ylab = "Threshold (log units)", pch = 16, cex = 0.75)
+p0 <- c(-5.52775200,1.43144247,  0.55787001,  9.61891047,  3.50298517,  0.09719098)
+lines(dark$time, P6c(p0, dark$time), col = 2, lwd = 3)
+```
+
+the second, an exponential, bilinear model, is more complex and was first described by Mahroo and Lamb (ref)
+
+```{r linBi,echo=FALSE, fig.cap="The exponential, bilinear model of dark adaptation. This model has seven parameters, cone threshold, cone coefficient, cone time constant, rod cone break time, the slope of the S2 phase, rod-rod break time, slope of the S3 phase", fig.width=5, fig.height=5}
+rm(list = ls())
+library(Dark)
+p0 <- dark$opt
+par(las = 1, bty = 'n')
+plot(dark$time, dark$thrs, xlab  = "Time (min)", ylab = "Threshold (log units)",pch = 16, cex = 0.75)
+lines(dark$time, P7c(p0, dark$time), col =2, lwd =3)
+```
+
+
+
+Put stuff about each model here, in particular that the MLP model has two distinct rod phases. 
+
+We are concerned with a reduced form of the Mahroo and Lamb Model with only five parameters.The threshold $Thr~(log(cd.m^{-2})$) with respect to $time~(minutes)$ of adaptation is defined as the sum of the cone response; $$Thrs_{cone} = CT + CC*\exp{(\dfrac{-time}{\tau})},$$ where $CT$ is the absolute cone threshold ($log(cd.m^{-2})$), $CC~(log(cd.m^{-2})$) the cone offset at time zero, and the time constant of recovery $\tau~(minutes)$,  and the rod threshold;
+$$Thrs_{rod} = \dfrac{S2 *(time-\alpha)}{1 + \exp{(-k*(time - \alpha))}},$$ where $S2~(log(cd.m^{-2}).min^{-1})$ is the rate limited rod recovery rate, $\alpha~(min)$ is the time when rod sensitivity is greater than cone sensitivity, and $k$ is a dimensionless value. The denominator ensures that rod contribution to sensitivity is nil before $\alpha$ and additive after, the value of $k$ affects the rate of switch transition and is discussed in the appendix. 
+
+```{r data, echo=FALSE, fig.cap="This is my plot", fig.width=5, fig.height=5}
+library(Dark)
+p0 <- dark$opt
+idx <- dark$time < p0[7]
+par(las = 1, bty = 'n')
+plot(dark$time[idx], dark$thrs[idx], xlab  = "Time (min)", ylab = "Threshold (log units)", ylim = c(-5,0),pch = 16, cex = 0.75)
+lines(dark$time[idx], P3(p0[1:3], dark$time[idx]), col =2, lwd = 2)
+lines(dark$time[idx], p0[1] + p0[4]*(dark$time[idx] - p0[5]), col = 2, lwd = 2)
+
+# lines(dark$time, P5c(p0, dark$time))
+```
+
+Hence the estimated threshold for a time $t$ and model parameter estimate $\boldsymbol{\hat\theta}$ is; 
+\begin{equation}\label{eqn:est}
+\tag{1}
+Thrs(\boldsymbol{\hat\theta}, t) = \theta_1 + \theta_2\exp\Big({\dfrac{-t}{\theta_3}} \Big) +  \theta_4\dfrac{(t-\theta_5)}{1 + \exp{(-k*(t - \theta_5)})}\end{equation}
+
+and it follows that the residuals can be written as a vector $\bf{R}$  where
+
+\begin{align}\label{eqh:resi}
+          \boldsymbol{R(\hat\theta)} &= \begin{bmatrix} 
+          thrs_1 - Thrs(\boldsymbol{\hat\theta}, time_1) \\
+          thrs_2 - Thrs(\boldsymbol{\hat\theta}, time_2) \\
+          thrs_3 - Thrs(\boldsymbol{\hat\theta}, time_3) \\
+          \vdots\\
+          thrs_n - Thrs(\boldsymbol{\hat\theta}, time_n)
+         \end{bmatrix}
+\end{align}
+  
+
+## Finding the parameters
+
+We are interested in the parameters ($\boldsymbol{\theta}$) of the model described above, a common technique takes a number ($n$) of threshold measurements over time and calculates the difference between the actual measurements and estimated values for a given set of parameters. These differences are squared and summed, then the parameters of the model are modified until the sum of squares is at a minimum, the final parameter values are then considered optimal. The sum of the squared differences of the measured threshold and the estimated threshold is minimised, such that when $L(\boldsymbol{\theta})$ is at a minimum, the values of $\theta$ are the best estimate.
+This objective function can be written using $\odot$ to express element wise multiplication
+$$L(\boldsymbol{\hat\theta}) = \sum_{i = 1}^{n}{\boldsymbol{R(\hat\theta)}\odot \boldsymbol{R(\hat\theta)}}.$$ We use element wise multiplication notation to retain the $\sum$ notation. 
+
+When $L(\boldsymbol{\hat\theta})$ is at a minimum, $\dfrac{dL}{d\boldsymbol\theta} = 0$. We can use the gradient of the slope of the objective function to locate the minimum of the function using a gradient descent method. 
+
+### Gradient decent 
+
+We assume the objective function is convex over the parameter space, so that we can use the partial derivatives of the objective function to estimate the values of $\boldsymbol{\theta}$. A function composed of non decreasing convex functions will be convex ( see https://math.stackexchange.com/questions/108393/is-the-composition-of-n-convex-functions-itself-a-convex-function, 11/11/2020). (Possible weakness here)
+
+The method is illustrated in the figure below, and is briefly as follows. The gradient of the objective function for a set of parameters values (location 1), summarised as $\boldsymbol{\hat\theta}_1$ is found, these values are used to make a further estimate $\boldsymbol{\hat\theta}_2$ and a new gradient is found, which in turn is used to estimate new parameter values. The process is repeated until further changes yield little or no improvement in the value of $L(\boldsymbol{\hat\theta}_n)$. 
+
+
+```{r convex,echo=FALSE,  fig.cap=""}
+x <- seq(-4, 6, by = 0.1)
+fy <- function(x) x^2 - 2 * x - 4 
+y <- fy(x)
+yp <- 2*x -2
+
+par(las = 1, bty = "n", mar = c(5,5,1,1))
+plot(x, y, "l", 
+ yaxt = "n", xaxt = "n", 
+ylab = expression(bold(paste("L(",theta, ")" ))), 
+xlab = expression(bold(theta))
+)
+
+axis(1,lwd = 1, labels = FALSE)
+axis(2,lwd = 1, labels = FALSE)
+
+points(1,-5, pch = 16)
+
+points(-2, 4)
+text(-2,4, "1", adj = c(-1, -1)/2)
+
+abline(-8,-6, lty = 2)
+lines(c(-2,-1), c(4,4), lty = 3)
+lines(c(-1,-1), c(4, -1), lty = 3)
+points(-1, -1)
+text(-1,-1, "2", adj = c(-1, -1)/2)
+
+lines(c(-1,0), c(-1,-1), lty = 3)
+lines(c(0,0), c(-1,fy(0)), lty = 3)
+points(0, -4, col = 2)
+text(0,-4, "3", adj = c(-1, -1)/2)
+abline(-4,-2, col = 2, lty = 2)
+
+```
+
+
+### Finding the gradient vector
+
+
+This all builds into a gradient vector that is used to move from the initial estimate to the next. 
+
+
+
+then the differentials can be expressed as;
+
+\begin{align}
+\frac{\partial L}{\partial\theta_1} &= -2\sum_{i = 1}^{n}\Big( \boldsymbol{R}(\hat\theta)\odot \boldsymbol{1} \Big), \\
+\qquad &\textrm{[cone threshold]}\\
+\frac{\partial L}{\partial\theta_2} &= -2\sum_{i = 1}{n}\Big( \boldsymbol{R}(\hat\theta)\odot \exp\Big(-\dfrac{time_i}{\theta_3}  \Big)\Big),\\
+\qquad &\textrm{[cone offset]}\\
+\frac{\partial L}{\partial\theta_3} &= -2\sum_{i = 1}{n}\Big( \boldsymbol{R}(\hat\theta)\odot \dfrac{\exp\Big(-\theta_2.\dfrac{time_i}{\theta_3}.time_i  \Big) }{\theta_3^2}\Big),\\
+\qquad &\textrm{[cone time constant]}\\
+\frac{\partial L}{\partial\theta_4} &= -2\sum_{i = 1}^{n}\Big( \boldsymbol{R}(\hat\theta)\odot \dfrac{(time_i - \theta_5)}{\big(1 + \exp(time_i - \theta_5)  \big) }\Big), \\
+\qquad &\textrm{[S2, rod rate of recovery]}\\
+\frac{\partial L}{\partial\theta_5} &= -2\sum_{i = 1}^{n}\Big( \boldsymbol{R}(\hat\theta)\odot \Big(\dfrac{\theta_4}{1+\exp(time_i - \theta_5)}- \theta_4. \exp(time_i - \theta_5)\dfrac{(time_i - \theta_5)}{(1 + \exp(time_i - \theta_5))^2}  \Big)\Big). \\
+\qquad &\textrm{[cone-rod break point]}\\
+\end{align}
+
+hence   
+\begin{align}
+    \nabla_\theta \boldsymbol{L(\theta)} &= \begin{bmatrix}
+          \frac{\partial L}{\partial\theta_1} \\
+           \frac{\partial L}{\partial\theta_2}\\
+           \frac{\partial L}{\partial\theta_3}\\
+           \frac{\partial L}{\partial\theta_4} \\
+           \frac{\partial L}{\partial\theta_5}
+         \end{bmatrix}
+  \end{align}
+  
+Having found the gradient vector then we do the descent thing
+
+### Plain gradient descent
+
+\begin{equation}\label{eqn:vani}
+\Par{n+1} =\Par{n} - \eta\nabla_\theta L(\Par{n}) \\
+\end{equation}
+
+### Momentum 
+
+\begin{align} 
+\begin{split} 
+v_0 &= \boldsymbol{0}\\
+v_n &= \gamma v_{n-1} + \eta \nabla_\theta L(\Par{n}) \\ 
+\Par{n+1} &= \Par{n} - v_n 
+\end{split} 
+\end{align}
+  
+  
+  
+  
+### Nesterov 
+
+\begin{align} 
+\begin{split} 
+v_n &= \gamma v_{n-1} + \eta \nabla_\theta L( \Par{n} - \gamma v_{n-1} ) \\ 
+\Par{n+1} &= \Par{n} - v_n 
+\end{split} 
+\end{align}
+
+## How do the gradient values vary as the estimate changes?
+
+The first order partial differential equations are plotted below.
+
+The parameters ct, cc and S2 are linear in the model 
+
+```{r linear, echo=FALSE, fig.cap="", fig.height=3, fig.width=9 }
+
+# Plot of Loss Function as p0 varies
+rm(list=ls())
+set.seed(1234)
+
+source('~/Dropbox/Mumac_/CODE_1/Archive/r_code/GradientInR/gradientDescentFunctions.R')
+library(Dark)
+
+p0 <- dark$opt[1:5]
+ref <- dark$time < dark$opt[7]
+nobs <- sum(ref)
+noise <- rnorm(nobs, 0, 0.03)
+
+time <- x <- dark$time[ref]
+
+thrs<- y <- dark$thrs[ref] 
+
+Params <- c("ct", "cc", "tau", "S2", "alpha")
+
+
+
+
+LS <- NULL
+Gr <- NULL
+idx <- 1
+tmp <- p0[idx]
+
+DEs <- c(pdf1, pdf2, pdf3, pdf4, pdf5)
+Fac <- c(-10,10,8, -70, 30/(0.1+max(x)))
+P1 <- seq(1,30, length.out = 500)/Fac[idx]
+for(ii in P1){
+	
+p0[idx]<- ii
+LS <- c(LS, sum((y - P5c(p0, x))**2))
+Gr <- c(Gr, DEs[[idx]](p0, P5c,x,y))
+
+}
+
+par(las = 1, bty = 'n', mfrow=c(1,3))
+# plot(x,y, ylim = c(-5,0), xlim = c(0,20), xlab = "Time (min)", ylab = "Threshold (l.u.)")
+
+# lines(x, P5c(dark$opt,x), col = 2)
+plot(P1, LS,  'l', ylab = "Loss function (L a.u)", xlab = Params[idx])
+abline(v = c(tmp), col = 2)
+plot(P1, Gr,  'l', ylab =expression(bold({L*minute})), xlab = Params[idx])
+abline(v = c(tmp), col = 2)
+abline(h = 0, col = 2, lty = 3)
+d2L <- diff(Gr)/diff(P1)
+plot(P1[-1],d2L, pch = '.', cex =2,xlab = Params[idx], ylab= expression(bold({L*second})))
+mod <- lm(d2L~P1[-1])
+abline(mod, col = 2)
+abline(h=0)
+
+
+
+
+
+```
+
+However the cone rod break time (alpha) behaves quite differently, notice that if the initial estimates for alpha and tau are greater than 12 or 6 respectively then the gradient function will direct the parameter search in the 'wrong' direction.
+
+
+```{r alpha, echo=FALSE, fig.width=9, fig.height=3 }
+
+# Plot of Loss Function as p0 varies
+rm(list=ls())
+set.seed(1234)
+
+source('~/Dropbox/Mumac_/CODE_1/Archive/r_code/GradientInR/gradientDescentFunctions.R')
+library(Dark)
+
+p0 <- dark$opt[1:5]
+ref <- dark$time < dark$opt[7]
+nobs <- sum(ref)
+noise <- rnorm(nobs, 0, 0.03)
+
+time <- x <- dark$time[ref]
+
+thrs<- y <- dark$thrs[ref] 
+
+Params <- c("ct", "cc", "tau", "S2", "alpha")
+
+
+
+
+LS <- NULL
+Gr <- NULL
+idx <- 5
+tmp <- p0[idx]
+
+DEs <- c(pdf1, pdf2, pdf3, pdf4, pdf5)
+Fac <- c(-10,10,8, -70, 30/(0.1+max(x)))
+P1 <- seq(1,30, length.out = 500)/Fac[idx]
+for(ii in P1){
+	
+p0[idx]<- ii
+LS <- c(LS, sum((y - P5c(p0, x))**2))
+Gr <- c(Gr, DEs[[idx]](p0, P5c,x,y))
+
+}
+
+par(las = 1, bty = 'n', mfrow=c(1,3))
+# plot(x,y, ylim = c(-5,0), xlim = c(0,20), xlab = "Time (min)", ylab = "Threshold (l.u.)")
+
+# lines(x, P5c(dark$opt,x), col = 2)
+plot(P1, LS,  'l', ylab = "Loss function (L a.u)", xlab = Params[idx])
+abline(v = c(tmp), col = 2)
+plot(P1, Gr,  'l', ylab =expression(bold({L*minute})), xlab = Params[idx])
+abline(v = c(tmp), col = 2)
+abline(h = 0, col = 2, lty = 3)
+d2L <- diff(Gr)/diff(P1)
+plot(P1[-1],d2L, pch = '.', cex =2,xlab = Params[idx], ylab= expression(bold({L*second})) )
+abline(h=0)
+
+
+```
+
+
+
+```{r tau, echo=FALSE, fig.width=9, fig.height=3 }
+
+# Plot of Loss Function as p0 varies
+rm(list=ls())
+set.seed(1234)
+
+source('~/Dropbox/Mumac_/CODE_1/Archive/r_code/GradientInR/gradientDescentFunctions.R')
+library(Dark)
+
+p0 <- dark$opt[1:5]
+ref <- dark$time < dark$opt[7]
+nobs <- sum(ref)
+noise <- rnorm(nobs, 0, 0.03)
+
+time <- x <- dark$time[ref]
+
+thrs<- y <- dark$thrs[ref] 
+
+Params <- c("ct", "cc", "tau", "S2", "alpha")
+
+
+
+
+LS <- NULL
+Gr <- NULL
+idx <- 3
+tmp <- p0[idx]
+
+DEs <- c(pdf1, pdf2, pdf3, pdf4, pdf5)
+Fac <- c(-10,10,2, -70, 30/(0.1+max(x)))
+P1 <- seq(1,30, length.out = 500)/Fac[idx]
+for(ii in P1){
+	
+p0[idx]<- ii
+LS <- c(LS, sum((y - P5c(p0, x))**2))
+Gr <- c(Gr, DEs[[idx]](p0, P5c,x,y))
+
+}
+
+par(las = 1, bty = 'n', mfrow=c(1,3))
+# plot(x,y, ylim = c(-5,0), xlim = c(0,20), xlab = "Time (min)", ylab = "Threshold (l.u.)")
+
+# lines(x, P5c(dark$opt,x), col = 2)
+plot(P1, LS,  'l', ylab = "Loss function (L a.u)", xlab = Params[idx])
+abline(v = c(tmp), col = 2)
+plot(P1, Gr,  'l', ylab =expression(bold({L*minute})), xlab = Params[idx])
+abline(v = c(tmp), col = 2)
+abline(h = 0, col = 2, lty = 3)
+d2L <- diff(Gr)/diff(P1)
+plot(P1[-1],d2L, pch = '.', cex =2, xlab = Params[idx], ylab= expression(bold({L*second})) )
+abline(h=0)
+
+
+```
+
+
+
+
+## Appendix
+  
+  
+\begin{equation}\label{eqn:grad}
+\boldsymbol{\nabla(\theta)} = 
+\end{equation}
+
+\begin{equation}\label{eqn:ct}
+\frac{\partial L}{\partial\theta_1} =
+\frac{\partial L}{\partial CT} = 
+-2\sum_{i =1}^{n}{\fn{}}
+\end{equation}
+
+
+\begin{equation}\label{eqn:cc}
+\frac{\partial L}{\partial\theta_2} =
+\frac{\partial L}{\partial CC} = 
+-2 \sum_{i =1}^{n}\exp\Big(-\dfrac{time_i}{\theta_3}  \Big){\fn{}}
+\end{equation}
+
+\begin{equation}\label{eqn:tau}
+\frac{\partial L}{\partial\theta_3} =
+\frac{\partial L}{\partial \tau} = 
+-2\sum_{i =1}^{n}\dfrac{\exp\Big(-\dfrac{time_i}{\theta_3}\Big)\theta_2.time_i   {\fn{}}}{\theta_3^2}
+\end{equation}
+
+\begin{equation}\label{eqn:s2}
+\frac{\partial L}{\partial\theta_4} =
+\frac{\partial L}{\partial{S2}} = 
+-2\sum_{i =1}^{n}\dfrac{(time_i - \theta_5){\fn{}}}{\big(1 + \exp(time_i - \theta_5)  \big)}
+\end{equation}
+
+
+\begin{align*}\label{eqn:alph}
+\frac{\partial L}{\partial\theta_5} =
+\frac{\partial L}{\partial \alpha} = 
+ 2\sum_{i =1}^{n}\Big(\dfrac{\theta_4}{1+\exp(time_i - \theta_5)}- \theta_4. \exp(time_i - \theta_5)\dfrac{(time_i - \theta_5)}{(1 + \exp(time_i - \theta_5))^2}  \Big)\\
+ *
+ \\
+ {\fn{}}
+\end{align*}
+
+
